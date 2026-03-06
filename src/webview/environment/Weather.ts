@@ -13,6 +13,7 @@ export class Weather {
   private readonly rainLayer: Phaser.GameObjects.Graphics;
   private readonly rainbowLayer: Phaser.GameObjects.Graphics;
   private readonly sunDisk: Phaser.GameObjects.Arc;
+  private enabled = true;
   private mode: WeatherMode = 'clear';
   private modeUntil = 0;
 
@@ -34,11 +35,30 @@ export class Weather {
   }
 
   /**
+   * Enables or disables weather effects.
+   *
+   * @param enabled Whether weather effects should render and react to signals.
+   */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+
+    if (!enabled) {
+      this.mode = 'clear';
+      this.modeUntil = 0;
+      this.clearLayers();
+    }
+  }
+
+  /**
    * Applies an incoming health signal to weather state.
    *
    * @param signal Health signal payload.
    */
   applySignal(signal: HealthSignal): void {
+    if (!this.enabled) {
+      return;
+    }
+
     switch (signal.type) {
       case 'critical':
       case 'negative':
@@ -67,15 +87,16 @@ export class Weather {
    * @param now Current timestamp in milliseconds.
    */
   update(now: number): void {
+    this.clearLayers();
+
+    if (!this.enabled) {
+      return;
+    }
+
     if (this.modeUntil !== 0 && now > this.modeUntil) {
       this.mode = 'clear';
       this.modeUntil = 0;
     }
-
-    this.cloudLayer.clear();
-    this.rainLayer.clear();
-    this.rainbowLayer.clear();
-
     this.sunDisk.setAlpha(this.mode === 'sun' ? 0.95 : 0);
 
     if (this.mode === 'clouds' || this.mode === 'rain') {
@@ -125,5 +146,12 @@ export class Weather {
       this.rainbowLayer.lineStyle(6, color, 0.85);
       this.rainbowLayer.strokeCircle(centerX, centerY, 260 - i * 10);
     }
+  }
+
+  private clearLayers(): void {
+    this.cloudLayer.clear();
+    this.rainLayer.clear();
+    this.rainbowLayer.clear();
+    this.sunDisk.setAlpha(0);
   }
 }

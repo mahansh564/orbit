@@ -15,6 +15,11 @@ export const TERRARIUM_DIMENSIONS = {
 } as const;
 
 /**
+ * Minimum frame rate that can be configured.
+ */
+export const MIN_FPS = 1 as const;
+
+/**
  * Maximum frame rate used by webview rendering.
  */
 export const MAX_FPS = 30 as const;
@@ -88,6 +93,20 @@ export const DEFAULT_TERRARIUM_CONFIG: TerrariumConfig = {
   agents: [],
   weatherEnabled: true
 };
+
+/**
+ * Clamps a runtime FPS value to supported terrarium boundaries.
+ *
+ * @param value Candidate frame rate.
+ * @returns Sanitized frame rate.
+ */
+export function clampMaxFps(value: number): number {
+  if (!Number.isFinite(value)) {
+    return MAX_FPS;
+  }
+
+  return Math.max(MIN_FPS, Math.min(MAX_FPS, Math.round(value)));
+}
 
 /**
  * Boundaries for clamping mood values.

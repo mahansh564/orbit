@@ -156,6 +156,8 @@ export interface AgentConfig {
   id: string;
   /** Human-readable display name. */
   name: string;
+  /** Source adapter id used to read this transcript source. */
+  sourceAdapter?: string;
   /** Absolute transcript path (file or directory). */
   transcriptPath: string;
   /** Creature archetype used for rendering. */
@@ -169,7 +171,7 @@ export interface AgentConfig {
  */
 export interface TerrariumConfig {
   /** Maximum frame rate for rendering. */
-  maxFps: 30;
+  maxFps: number;
   /** Configured tracked agents. */
   agents: AgentConfig[];
   /** Whether weather effects should be enabled. */

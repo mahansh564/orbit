@@ -1,11 +1,18 @@
 import { TERRARIUM_DIMENSIONS } from '@shared/constants';
 import type { AgentConfig } from '@shared/types';
+import { TERRARIUM_AUDIO_ASSETS, TERRARIUM_TILEMAP_KEY } from '../assets/manifest';
 import { Creature } from '../entities/Creature';
 import { CreatureFactory } from '../entities/CreatureFactory';
 import { DayNight } from '../environment/DayNight';
 import { Flora } from '../environment/Flora';
+import {
+  pickTileTextureFallback,
+  readTilemapAsset,
+  resolveTileFromMap
+} from '../environment/tilemap';
 import { Weather } from '../environment/Weather';
 import { HUD } from '../ui/HUD';
+import { Tooltip } from '../ui/Tooltip';
 import { getTerrariumState } from '../state/context';
 
 /**
@@ -18,6 +25,8 @@ export class TerrariumScene extends Phaser.Scene {
   private flora!: Flora;
   private dayNight!: DayNight;
   private hud!: HUD;
+  private tooltip!: Tooltip;
+  private ambientTrack: Phaser.Sound.BaseSound | null = null;
   private unsubscribe: (() => void) | null = null;
 
   /**
@@ -39,19 +48,33 @@ export class TerrariumScene extends Phaser.Scene {
     this.flora = new Flora(this);
     this.dayNight = new DayNight(this);
     this.hud = new HUD(this);
+    this.tooltip = new Tooltip(this);
+    this.weather.setEnabled(state.getConfig().weatherEnabled);
+    this.startAmbientTrack();
 
     this.syncCreatures(state.getConfig().agents);
     this.hud.syncCreatures(this.creatures);
+    this.tooltip.syncCreatures(this.creatures);
 
     this.unsubscribe = state.subscribe(() => {
+      this.weather.setEnabled(state.getConfig().weatherEnabled);
       this.syncCreatures(state.getConfig().agents);
       this.hud.syncCreatures(this.creatures);
+      this.tooltip.syncCreatures(this.creatures);
     });
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       if (this.unsubscribe !== null) {
         this.unsubscribe();
       }
+
+      if (this.ambientTrack !== null) {
+        this.ambientTrack.stop();
+        this.ambientTrack.destroy();
+        this.ambientTrack = null;
+      }
+
+      this.tooltip.destroy();
     });
   }
 
@@ -92,6 +115,7 @@ export class TerrariumScene extends Phaser.Scene {
     this.flora.update(delta);
     this.dayNight.update(time);
     this.hud.update(this.creatures);
+    this.tooltip.update(this.creatures);
   }
 
   private syncCreatures(configuredAgents: AgentConfig[]): void {
@@ -125,43 +149,78 @@ export class TerrariumScene extends Phaser.Scene {
       });
 
       this.creatures.set(agent.id, creature);
+      this.bindCreatureTooltipInteractions(creature);
     }
   }
 
+  private bindCreatureTooltipInteractions(creature: Creature): void {
+    const agentId = creature.getAgent().id;
+
+    creature.onPointerOver(() => {
+      this.tooltip.setHoveredAgent(agentId);
+    });
+
+    creature.onPointerOut(() => {
+      this.tooltip.clearHoveredAgent(agentId);
+    });
+
+    creature.onPointerDown(() => {
+      this.tooltip.toggleSelectedAgent(agentId);
+      this.tooltip.setHoveredAgent(agentId);
+    });
+  }
+
   private drawBackground(): void {
-    const columns = Math.ceil(TERRARIUM_DIMENSIONS.width / TERRARIUM_DIMENSIONS.tileSize);
-    const rows = Math.ceil(TERRARIUM_DIMENSIONS.height / TERRARIUM_DIMENSIONS.tileSize);
+    const loadedTilemap = readTilemapAsset(this.cache.json.get(TERRARIUM_TILEMAP_KEY));
+    const tileSize = loadedTilemap?.tileSize ?? TERRARIUM_DIMENSIONS.tileSize;
+    const columns = loadedTilemap?.width ?? Math.ceil(TERRARIUM_DIMENSIONS.width / tileSize);
+    const rows = loadedTilemap?.height ?? Math.ceil(TERRARIUM_DIMENSIONS.height / tileSize);
 
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < columns; col += 1) {
-        const textureKey = pickTileTexture(row, col);
+        const textureKey =
+          loadedTilemap !== null
+            ? resolveTileFromMap(loadedTilemap, row, col)
+            : pickTileTextureFallback(row, col);
         const image = this.add.image(
-          col * TERRARIUM_DIMENSIONS.tileSize + TERRARIUM_DIMENSIONS.tileSize / 2,
-          row * TERRARIUM_DIMENSIONS.tileSize + TERRARIUM_DIMENSIONS.tileSize / 2,
+          col * tileSize + tileSize / 2,
+          row * tileSize + tileSize / 2,
           textureKey
         );
         image.setDepth(0);
       }
     }
   }
-}
 
-function pickTileTexture(row: number, col: number): string {
-  const noise = (row * 17 + col * 29) % 100;
+  private startAmbientTrack(): void {
+    const track = TERRARIUM_AUDIO_ASSETS[0];
+    if (track === undefined) {
+      return;
+    }
 
-  if (row < 8) {
-    return noise > 72 ? 'tile-water' : 'tile-grass';
+    try {
+      this.ambientTrack = this.sound.add(track.key, {
+        loop: true,
+        volume: 0.08
+      });
+    } catch {
+      this.ambientTrack = null;
+      return;
+    }
+
+    const playTrack = (): void => {
+      if (this.ambientTrack !== null && !this.ambientTrack.isPlaying) {
+        this.ambientTrack.play();
+      }
+    };
+
+    if (this.sound.locked) {
+      this.sound.once('unlocked', playTrack);
+      return;
+    }
+
+    playTrack();
   }
-
-  if (row > 24) {
-    return noise > 45 ? 'tile-dirt' : 'tile-rock';
-  }
-
-  if (noise > 86) {
-    return 'tile-rock';
-  }
-
-  return 'tile-grass';
 }
 
 function demoAgent(): AgentConfig {

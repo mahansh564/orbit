@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import * as vscode from 'vscode';
 import {
+  clampMaxFps,
   DEFAULT_TERRARIUM_CONFIG,
-  MAX_FPS,
   PERSISTED_SCHEMA_VERSION
 } from '@shared/constants';
 import type {
@@ -143,11 +142,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showInformationMessage('CodeTerrarium ecosystem has been reset.');
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (!event.affectsConfiguration('codeterrarium.agents')) {
+      const agentsChanged = event.affectsConfiguration('codeterrarium.agents');
+      const runtimeChanged =
+        event.affectsConfiguration('codeterrarium.maxFps') ||
+        event.affectsConfiguration('codeterrarium.weatherEnabled');
+
+      if (!agentsChanged && !runtimeChanged) {
         return;
       }
 
-      reloadWatchers();
+      if (agentsChanged) {
+        reloadWatchers();
+      }
+
       void postIfPanelOpen(bridge, {
         type: 'init',
         payload: {
@@ -214,7 +221,7 @@ function readTerrariumConfig(): TerrariumConfig {
   const settings = vscode.workspace.getConfiguration('codeterrarium');
 
   return {
-    maxFps: MAX_FPS,
+    maxFps: clampMaxFps(settings.get<number>('maxFps', DEFAULT_TERRARIUM_CONFIG.maxFps)),
     agents: readAgentConfigs(),
     weatherEnabled: settings.get<boolean>('weatherEnabled', DEFAULT_TERRARIUM_CONFIG.weatherEnabled)
   };
@@ -233,6 +240,10 @@ function readAgentConfigs(): AgentConfig[] {
       const record = entry as Record<string, unknown>;
       const id = typeof record.id === 'string' ? record.id : '';
       const name = typeof record.name === 'string' ? record.name : id;
+      const sourceAdapter =
+        typeof record.sourceAdapter === 'string' && record.sourceAdapter.trim().length > 0
+          ? record.sourceAdapter.trim().toLowerCase()
+          : undefined;
       const transcriptPath = typeof record.transcriptPath === 'string' ? record.transcriptPath : '';
       const creatureType = normalizeCreatureType(record.creatureType);
       const color = typeof record.color === 'string' ? record.color : undefined;
@@ -245,13 +256,13 @@ function readAgentConfigs(): AgentConfig[] {
         {
           id,
           name,
+          ...(sourceAdapter !== undefined ? { sourceAdapter } : {}),
           transcriptPath,
           creatureType,
           ...(color !== undefined ? { color } : {})
         }
       ];
-    })
-    .filter((agent) => existsSync(agent.transcriptPath));
+    });
 }
 
 async function addAgentConfiguration(): Promise<AgentConfig | null> {

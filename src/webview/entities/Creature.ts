@@ -130,6 +130,7 @@ export class Creature {
     this.sprite = scene.add.sprite(x, y, `${textureKey}-idle`);
     this.sprite.setOrigin(0.5, 0.5);
     this.sprite.setScale(2);
+    this.sprite.setInteractive({ useHandCursor: true });
 
     if (agent.color !== undefined) {
       this.sprite.setTint(parseHexColor(agent.color));
@@ -223,6 +224,42 @@ export class Creature {
    */
   getState(): CreatureState {
     return this.snapshot.state;
+  }
+
+  /**
+   * Returns current progress metrics.
+   *
+   * @returns Creature snapshot clone.
+   */
+  getSnapshot(): CreatureSnapshot {
+    return { ...this.snapshot };
+  }
+
+  /**
+   * Registers a callback fired when pointer hovers this creature.
+   *
+   * @param handler Hover callback.
+   */
+  onPointerOver(handler: () => void): void {
+    this.sprite.on(Phaser.Input.Events.POINTER_OVER, handler);
+  }
+
+  /**
+   * Registers a callback fired when pointer leaves this creature.
+   *
+   * @param handler Hover-end callback.
+   */
+  onPointerOut(handler: () => void): void {
+    this.sprite.on(Phaser.Input.Events.POINTER_OUT, handler);
+  }
+
+  /**
+   * Registers a callback fired when this creature is clicked.
+   *
+   * @param handler Click callback.
+   */
+  onPointerDown(handler: () => void): void {
+    this.sprite.on(Phaser.Input.Events.POINTER_DOWN, handler);
   }
 
   /**

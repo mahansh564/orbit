@@ -1,4 +1,5 @@
 import {
+  DEFAULT_TERRARIUM_CONFIG,
   DEFAULT_PERSISTED_CREATURE_STATE,
   PERSIST_DEBOUNCE_MS,
   PERSISTED_SCHEMA_VERSION
@@ -28,11 +29,7 @@ export type TerrariumStateListener = () => void;
  * Central in-memory state store for the webview runtime.
  */
 export class TerrariumState {
-  private config: TerrariumConfig = {
-    maxFps: 30,
-    agents: [],
-    weatherEnabled: true
-  };
+  private config: TerrariumConfig = { ...DEFAULT_TERRARIUM_CONFIG };
 
   private persisted: PersistedStatsFile = {
     version: PERSISTED_SCHEMA_VERSION,

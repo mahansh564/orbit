@@ -74,6 +74,10 @@
                 "type": "string",
                 "description": "Display name for the agent."
               },
+              "sourceAdapter": {
+                "type": "string",
+                "description": "Optional source adapter id (for example: jsonl). Defaults to jsonl."
+              },
               "transcriptPath": {
                 "type": "string",
                 "description": "Absolute path to transcript file or directory."
