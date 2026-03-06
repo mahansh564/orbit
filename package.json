@@ -1,0 +1,126 @@
+{
+  "name": "codeterrarium",
+  "displayName": "CodeTerrarium",
+  "description": "A living pixel-art terrarium for AI coding agents inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "anshulmahajan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anshulmahajan/codeterrarium.git"
+  },
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:codeterrarium.open",
+    "onCommand:codeterrarium.addAgent",
+    "onCommand:codeterrarium.resetEcosystem"
+  ],
+  "main": "./dist/extension/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codeterrarium.open",
+        "title": "CodeTerrarium: Open Terrarium"
+      },
+      {
+        "command": "codeterrarium.addAgent",
+        "title": "CodeTerrarium: Add Agent"
+      },
+      {
+        "command": "codeterrarium.resetEcosystem",
+        "title": "CodeTerrarium: Reset Ecosystem"
+      }
+    ],
+    "configuration": {
+      "title": "CodeTerrarium",
+      "properties": {
+        "codeterrarium.maxFps": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Maximum render FPS for the terrarium webview."
+        },
+        "codeterrarium.weatherEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable weather effects in the terrarium."
+        },
+        "codeterrarium.agents": {
+          "type": "array",
+          "description": "Configured transcript sources for observed coding agents.",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "transcriptPath",
+              "creatureType"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable agent identifier."
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name for the agent."
+              },
+              "transcriptPath": {
+                "type": "string",
+                "description": "Absolute path to transcript file or directory."
+              },
+              "creatureType": {
+                "type": "string",
+                "enum": [
+                  "fox",
+                  "otter",
+                  "slime",
+                  "bird"
+                ],
+                "description": "Creature archetype used in the terrarium."
+              },
+              "color": {
+                "type": "string",
+                "description": "Optional hex color override for creature tint."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run typecheck && npm run build:extension && npm run build:webview",
+    "build:extension": "esbuild src/extension/activate.ts --bundle --outfile=dist/extension/extension.js --platform=node --format=cjs --target=node18 --sourcemap --external:vscode",
+    "build:webview": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "package": "npm run build && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.96.0",
+    "@types/node": "^22.10.2",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.2.2",
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "eslint": "^9.17.0",
+    "esbuild": "^0.24.2",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  }
+}

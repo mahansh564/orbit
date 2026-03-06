@@ -1,0 +1,10 @@
+src/**
+tests/**
+.eslintrc*
+eslint.config.*
+prettier.config.*
+vitest.config.ts
+esbuild.config.ts
+vite.config.ts
+tsconfig.json
+AGENTS.md
