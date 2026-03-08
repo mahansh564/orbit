@@ -173,6 +173,13 @@ export class StationState {
     this.schedulePersist();
   }
 
+  /**
+   * Requests the extension host to run the configured add-agent command flow.
+   */
+  requestAddAgent(): void {
+    this.postToExtension({ type: 'open_add_agent' });
+  }
+
   private ensureAgentStates(agents: AgentConfig[]): void {
     for (const agent of agents) {
       this.ensureStateForAgent(agent.id);

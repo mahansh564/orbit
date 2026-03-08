@@ -28,6 +28,8 @@ CodeOrbit is a VS Code extension that visualizes AI coding agents as crew units 
 4. In the Extension Development Host, run:
    - `CodeOrbit: Add Agent` (configure at least one transcript source)
    - `CodeOrbit: Open Station`
+   - Or inside the station HUD, use `+ ADD AGENT` (or press `N`) to trigger the same VS Code/Cursor add-agent flow.
+   - In Cursor, when `codeorbit.cursorNativeAddAgentBridge.enabled` is `true`, CodeOrbit mirrors active Cursor agent chats as runtime-only agents (named from Cursor composer names) using `~/.cursor/projects/<workspace>/agent-transcripts/<composerId>/<composerId>.jsonl`.
 
 ## Configuration
 
@@ -38,6 +40,13 @@ CodeOrbit reads settings from the `codeorbit` namespace in workspace settings.
 - `codeorbit.maxFps` (`number`, default `30`, min `1`, max `30`)
 - `codeorbit.stationEffectsEnabled` (`boolean`, default `true`)
 - `codeorbit.agents` (`AgentConfig[]`, default `[]`)
+- `codeorbit.cursorNativeAddAgentBridge.enabled` (`boolean`, default `true`)
+- `codeorbit.cursorNativeAddAgentBridge.commandIds` (`string[]`, default includes Cursor agent/composer new commands)
+- `codeorbit.cursorNativeAddAgentBridge.cooldownMs` (`number`, default `1200`, min `250`)
+- `codeorbit.cursorNativeAddAgentBridge.storageFallbackEnabled` (`boolean`, default `true`)
+- `codeorbit.cursorNativeAddAgentBridge.storageFallbackPollMs` (`number`, default `2500`, min `500`)
+
+Deep sync note: storage fallback reads Cursor `state.vscdb` via the `sqlite3` CLI (when available) to mirror open `unifiedMode: "agent"` composers (selected/focused), with fallback to non-archived agent composers when open-state ids are unavailable.
 
 Each agent entry supports:
 
@@ -54,6 +63,16 @@ Each agent entry supports:
 {
   "codeorbit.maxFps": 24,
   "codeorbit.stationEffectsEnabled": true,
+  "codeorbit.cursorNativeAddAgentBridge.enabled": true,
+  "codeorbit.cursorNativeAddAgentBridge.commandIds": [
+    "glass.newAgent",
+    "composer.newAgentChat",
+    "composer.createNew",
+    "composer.createNewComposerTab"
+  ],
+  "codeorbit.cursorNativeAddAgentBridge.cooldownMs": 1200,
+  "codeorbit.cursorNativeAddAgentBridge.storageFallbackEnabled": true,
+  "codeorbit.cursorNativeAddAgentBridge.storageFallbackPollMs": 2500,
   "codeorbit.agents": [
     {
       "id": "codex",
@@ -76,6 +95,8 @@ Each agent entry supports:
 ## Transcript Format (JSONL)
 
 The built-in `jsonl` adapter expects newline-delimited JSON, one event object per line.
+
+Cursor `agent-transcripts/*.jsonl` message records are also supported. CodeOrbit infers activity actions (including `input_request`) from `role: "assistant"` message content when explicit `action`/`kind` fields are not present.
 
 ### Required Event Data
 
@@ -116,7 +137,7 @@ The built-in `jsonl` adapter expects newline-delimited JSON, one event object pe
 ### File/Directory Watching Behavior
 
 - If `transcriptPath` points to a file, CodeOrbit watches appended lines in that file.
-- If `transcriptPath` points to a directory, only `*.jsonl` files are watched.
+- If `transcriptPath` points to a directory, `*.jsonl` files are discovered recursively.
 - Existing content is treated as historical baseline; visuals update from newly appended events.
 
 ## Commands
@@ -132,6 +153,17 @@ The built-in `jsonl` adapter expects newline-delimited JSON, one event object pe
 - `npm run test:integration` - `@vscode/test-electron` lifecycle/messaging tests
 - `npm run build` - production extension + webview build
 - `npm run package` - create VSIX package
+- `npm run release:validate` - verify `package.json` version and `CHANGELOG.md` version alignment
+- `npm run release:check` - run full release gate (validation, tests, build, package, VSIX filename check)
+
+## Release Checklist
+
+- [ ] Bump `version` in `package.json` using semver.
+- [ ] Add a matching `## <version>` section at the top of `CHANGELOG.md`.
+- [ ] Run `npm run release:validate`.
+- [ ] (Optional but recommended) Run `npm run test:integration` in a GUI-capable environment.
+- [ ] Run `npm run release:check`.
+- [ ] Confirm the generated VSIX filename matches `codeorbit-<version>.vsix`.
 
 ## Persistence
 

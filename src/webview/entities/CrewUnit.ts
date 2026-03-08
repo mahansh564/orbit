@@ -139,22 +139,22 @@ export class CrewUnit {
   ) {
     this.sprite = scene.add.sprite(x, y, `${textureKey}-idle`);
     this.sprite.setOrigin(0.5, 0.5);
-    this.sprite.setScale(2);
+    this.sprite.setScale(1.35);
     this.sprite.setDepth(20);
     this.sprite.setInteractive({ useHandCursor: true });
 
-    this.selectionRing = scene.add.circle(x, y + 14, 14, 0x66d9ff, 0.14);
-    this.selectionRing.setStrokeStyle(2, 0x8fffe0, 0.9);
+    this.selectionRing = scene.add.circle(x, y + 14, 14, 0x7f8eff, 0.16);
+    this.selectionRing.setStrokeStyle(2, 0xa4f6ff, 0.95);
     this.selectionRing.setScale(1.4, 0.58);
     this.selectionRing.setDepth(18);
     this.selectionRing.setVisible(false);
 
-    this.commsHalo = scene.add.circle(x + 17, y - 25, 8, 0x74e9ff, 0.18);
-    this.commsHalo.setStrokeStyle(2, 0xb8fdff, 0.9);
+    this.commsHalo = scene.add.circle(x + 17, y - 25, 8, 0x95a6ff, 0.2);
+    this.commsHalo.setStrokeStyle(2, 0xd8e6ff, 0.92);
     this.commsHalo.setDepth(33);
     this.commsHalo.setVisible(false);
 
-    this.commsCore = scene.add.circle(x + 17, y - 25, 4, 0x74e9ff, 0.95);
+    this.commsCore = scene.add.circle(x + 17, y - 25, 4, 0xffffff, 0.96);
     this.commsCore.setDepth(34);
     this.commsCore.setVisible(false);
 
@@ -162,7 +162,7 @@ export class CrewUnit {
       fontFamily: '"Trebuchet MS", "Lucida Sans Unicode", sans-serif',
       fontSize: '11px',
       fontStyle: 'bold',
-      color: '#00131f'
+      color: '#11184f'
     });
     this.commsText.setOrigin(0.5);
     this.commsText.setDepth(35);

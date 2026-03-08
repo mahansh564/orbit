@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import {
   clampMaxFps,
@@ -16,6 +18,23 @@ import type {
 } from '@shared/types';
 import { AgentWatcherManager } from './agentWatcher';
 import { ExtensionWebviewBridge } from './bridge';
+import {
+  CommandCooldownGate,
+  type CursorNativeAddAgentBridgeConfig,
+  DEFAULT_CURSOR_NATIVE_ADD_AGENT_COMMAND_IDS,
+  DEFAULT_CURSOR_NATIVE_ADD_AGENT_COOLDOWN_MS,
+  DEFAULT_CURSOR_STORAGE_FALLBACK_POLL_MS,
+  isCursorHost,
+  isCursorNativeAddAgentCommand,
+  normalizeCursorCommandIds,
+  normalizeCursorCooldownMs,
+  normalizeCursorStorageFallbackPollMs
+} from './cursorNativeBridge';
+import {
+  CursorComposerStorageSync,
+  type CursorComposerRecord
+} from './cursorComposerStorageSync';
+import { mergeRuntimeCursorAgents } from './cursorRuntimeAgents';
 import { WorkspaceStatsStore } from './persistence';
 
 const PANEL_VIEW_TYPE = 'codeorbit.panel';
@@ -24,6 +43,19 @@ let activePanel: vscode.WebviewPanel | null = null;
 type WebviewMessageProbe = (message: ExtensionToWebviewMessage) => void;
 let testMessageProbe: WebviewMessageProbe | null = null;
 let testMessageDispatcher: ((message: WebviewToExtensionMessage) => Promise<void>) | null = null;
+
+interface CommandExecutionEvent {
+  command: string;
+  arguments?: readonly unknown[];
+}
+
+interface CommandsWithExecutionEvents {
+  onDidExecuteCommand(
+    listener: (event: CommandExecutionEvent) => void,
+    thisArgs?: unknown,
+    disposables?: vscode.Disposable[]
+  ): vscode.Disposable;
+}
 
 /**
  * Extension API returned from activation for integration testing.
@@ -48,6 +80,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<CodeOr
   const bridge = new ExtensionWebviewBridge();
   const statsStore = new WorkspaceStatsStore(context);
   let persistedState = await statsStore.load();
+  let cursorBridgeConfig = readCursorNativeAddAgentBridgeConfig();
+  let cursorBridgeGate = new CommandCooldownGate(cursorBridgeConfig.cooldownMs);
+  let cursorStorageSync: CursorComposerStorageSync | null = null;
+  let cursorRuntimeComposers: readonly CursorComposerRecord[] = [];
+  let cursorStorageSyncGeneration = 0;
+  let lastStorageSyncWarningAt = Number.NEGATIVE_INFINITY;
   let messageSubscription: vscode.Disposable | null = null;
 
   const watcher = new AgentWatcherManager(
@@ -70,16 +108,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<CodeOr
     }
   );
 
+  const resolveRuntimeAgentConfigs = (): AgentConfig[] =>
+    withRuntimeCursorAgents(readAgentConfigs(), {
+      bridgeEnabled: cursorBridgeConfig.enabled,
+      cursorHost: isCursorHost(vscode.env.appName),
+      workspaceFolderPath: getPrimaryWorkspaceFolderPath(),
+      runtimeComposers: cursorRuntimeComposers
+    });
+
+  const postCurrentInit = async (): Promise<void> => {
+    await postIfPanelOpen(bridge, {
+      type: 'init',
+      payload: {
+        config: readStationConfig(resolveRuntimeAgentConfigs()),
+        persisted: persistedState
+      }
+    });
+  };
+
   const handleMessage = async (message: WebviewToExtensionMessage): Promise<void> => {
     switch (message.type) {
       case 'ready': {
-        await postIfPanelOpen(bridge, {
-          type: 'init',
-          payload: {
-            config: readStationConfig(),
-            persisted: persistedState
-          }
-        });
+        await postCurrentInit();
         break;
       }
       case 'persist_state': {
@@ -134,10 +184,122 @@ export async function activate(context: vscode.ExtensionContext): Promise<CodeOr
   };
 
   const reloadWatchers = (): void => {
-    watcher.updateAgents(readAgentConfigs());
+    watcher.updateAgents(resolveRuntimeAgentConfigs());
+  };
+
+  const updateCursorRuntimeComposers = (composers: readonly CursorComposerRecord[]): void => {
+    cursorRuntimeComposers = composers;
+    reloadWatchers();
+    void postCurrentInit();
+  };
+
+  const clearCursorRuntimeComposers = (): void => {
+    if (cursorRuntimeComposers.length === 0) {
+      return;
+    }
+
+    updateCursorRuntimeComposers([]);
+  };
+
+  const handleCursorNativeAddAgentCommand = async (commandId: string): Promise<void> => {
+    if (!cursorBridgeConfig.enabled) {
+      return;
+    }
+
+    if (!isCursorHost(vscode.env.appName)) {
+      return;
+    }
+
+    if (!isCursorNativeAddAgentCommand(commandId, cursorBridgeConfig.commandIds)) {
+      return;
+    }
+
+    if (!cursorBridgeGate.shouldAccept()) {
+      return;
+    }
+
+    if (cursorStorageSync !== null) {
+      cursorStorageSync.requestRefresh();
+      return;
+    }
+
+    await refreshCursorStorageSync();
+  };
+
+  const showStorageSyncWarning = (message: string): void => {
+    const now = Date.now();
+    if (now - lastStorageSyncWarningAt < 30000) {
+      return;
+    }
+
+    lastStorageSyncWarningAt = now;
+    void vscode.window.showWarningMessage(`CodeOrbit Cursor sync warning: ${message}`);
+  };
+
+  const refreshCursorStorageSync = async (): Promise<void> => {
+    const generation = ++cursorStorageSyncGeneration;
+    cursorStorageSync?.dispose();
+    cursorStorageSync = null;
+
+    if (!cursorBridgeConfig.enabled || !cursorBridgeConfig.storageFallbackEnabled) {
+      clearCursorRuntimeComposers();
+      return;
+    }
+
+    if (!isCursorHost(vscode.env.appName)) {
+      clearCursorRuntimeComposers();
+      return;
+    }
+
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder === undefined || workspaceFolder.uri.scheme !== 'file') {
+      clearCursorRuntimeComposers();
+      return;
+    }
+
+    const runtime = new CursorComposerStorageSync({
+      workspaceFolderPath: workspaceFolder.uri.fsPath,
+      pollMs: cursorBridgeConfig.storageFallbackPollMs,
+      onComposerSync: async (event) => {
+        if (generation !== cursorStorageSyncGeneration) {
+          return;
+        }
+
+        updateCursorRuntimeComposers(event.all);
+      },
+      onError: (error) => {
+        showStorageSyncWarning(error.message);
+      }
+    });
+
+    const started = await runtime.start();
+    if (generation !== cursorStorageSyncGeneration) {
+      runtime.dispose();
+      return;
+    }
+
+    if (!started) {
+      clearCursorRuntimeComposers();
+      return;
+    }
+
+    cursorStorageSync = runtime;
   };
 
   reloadWatchers();
+  await refreshCursorStorageSync();
+
+  const commandNamespace = vscode.commands;
+  const cursorCommandListener = hasCommandExecutionEvents(commandNamespace)
+    ? commandNamespace.onDidExecuteCommand((event: CommandExecutionEvent) => {
+        void handleCursorNativeAddAgentCommand(event.command).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          void vscode.window.showWarningMessage(
+            `CodeOrbit could not sync Cursor agent action: ${message}`
+          );
+        });
+      })
+    : null;
 
   context.subscriptions.push(
     watcher,
@@ -169,8 +331,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<CodeOr
       const runtimeChanged =
         event.affectsConfiguration('codeorbit.maxFps') ||
         event.affectsConfiguration('codeorbit.stationEffectsEnabled');
+      const cursorBridgeChanged =
+        event.affectsConfiguration('codeorbit.cursorNativeAddAgentBridge.enabled') ||
+        event.affectsConfiguration('codeorbit.cursorNativeAddAgentBridge.commandIds') ||
+        event.affectsConfiguration('codeorbit.cursorNativeAddAgentBridge.cooldownMs') ||
+        event.affectsConfiguration('codeorbit.cursorNativeAddAgentBridge.storageFallbackEnabled') ||
+        event.affectsConfiguration('codeorbit.cursorNativeAddAgentBridge.storageFallbackPollMs');
 
-      if (!agentsChanged && !runtimeChanged) {
+      if (!agentsChanged && !runtimeChanged && !cursorBridgeChanged) {
         return;
       }
 
@@ -178,24 +346,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<CodeOr
         reloadWatchers();
       }
 
-      void postIfPanelOpen(bridge, {
-        type: 'init',
-        payload: {
-          config: readStationConfig(),
-          persisted: persistedState
-        }
-      });
+      if (cursorBridgeChanged) {
+        cursorBridgeConfig = readCursorNativeAddAgentBridgeConfig();
+        cursorBridgeGate = new CommandCooldownGate(cursorBridgeConfig.cooldownMs);
+        void refreshCursorStorageSync();
+        reloadWatchers();
+      }
+
+      if (agentsChanged || runtimeChanged || cursorBridgeChanged) {
+        void postCurrentInit();
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void refreshCursorStorageSync();
+      reloadWatchers();
+      void postCurrentInit();
     }),
     {
       dispose: () => {
         messageSubscription?.dispose();
         watcher.dispose();
+        cursorStorageSync?.dispose();
+        cursorStorageSync = null;
+        cursorStorageSyncGeneration += 1;
         testMessageDispatcher = null;
         testMessageProbe = null;
         void statsStore.dispose();
       }
     }
   );
+
+  if (cursorCommandListener !== null) {
+    context.subscriptions.push(cursorCommandListener);
+  }
 
   return {
     __setWebviewMessageProbeForTest,
@@ -251,6 +434,12 @@ export function __isPanelOpenForTest(): boolean {
   return activePanel !== null;
 }
 
+function hasCommandExecutionEvents(
+  commands: typeof vscode.commands
+): commands is typeof vscode.commands & CommandsWithExecutionEvents {
+  return 'onDidExecuteCommand' in commands;
+}
+
 function createWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const nonce = randomUUID().replace(/-/g, '');
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview', 'main.js'));
@@ -269,12 +458,51 @@ function createWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): s
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <title>CodeOrbit</title>
   <style>
-    html, body, #app {
+    html, body {
       margin: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #101619;
+      background:
+        radial-gradient(circle at 16% 14%, rgba(121, 140, 255, 0.22) 0, rgba(121, 140, 255, 0) 36%),
+        radial-gradient(circle at 80% 80%, rgba(116, 235, 255, 0.18) 0, rgba(116, 235, 255, 0) 30%),
+        linear-gradient(180deg, #020329 0%, #030544 52%, #050b5e 100%);
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #app {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    #app::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+      background:
+        repeating-linear-gradient(180deg, rgba(206, 225, 255, 0.1) 0, rgba(206, 225, 255, 0.1) 1px, transparent 1px, transparent 3px),
+        radial-gradient(circle at 15% 30%, rgba(235, 242, 255, 0.55) 0, rgba(235, 242, 255, 0) 2px),
+        radial-gradient(circle at 68% 18%, rgba(175, 246, 255, 0.45) 0, rgba(175, 246, 255, 0) 2px),
+        radial-gradient(circle at 88% 46%, rgba(255, 248, 192, 0.38) 0, rgba(255, 248, 192, 0) 2px);
+      background-size: auto, auto, auto, auto;
+      mix-blend-mode: screen;
+      opacity: 0.18;
+    }
+
+    #app canvas {
+      position: relative;
+      z-index: 1;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      box-shadow: 0 0 0 2px rgba(145, 175, 255, 0.4), 0 0 36px rgba(110, 143, 255, 0.3), inset 0 0 0 2px rgba(225, 237, 255, 0.24);
     }
   </style>
 </head>
@@ -285,15 +513,45 @@ function createWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): s
 </html>`;
 }
 
-function readStationConfig(): StationConfig {
+function readStationConfig(agents = readAgentConfigs()): StationConfig {
   const settings = vscode.workspace.getConfiguration('codeorbit');
 
   return {
     maxFps: clampMaxFps(settings.get<number>('maxFps', DEFAULT_STATION_CONFIG.maxFps)),
-    agents: readAgentConfigs(),
+    agents,
     stationEffectsEnabled: settings.get<boolean>(
       'stationEffectsEnabled',
       DEFAULT_STATION_CONFIG.stationEffectsEnabled
+    )
+  };
+}
+
+function readCursorNativeAddAgentBridgeConfig(): CursorNativeAddAgentBridgeConfig {
+  const settings = vscode.workspace.getConfiguration('codeorbit');
+  return {
+    enabled: settings.get<boolean>('cursorNativeAddAgentBridge.enabled', true),
+    commandIds: normalizeCursorCommandIds(
+      settings.get<unknown>(
+        'cursorNativeAddAgentBridge.commandIds',
+        DEFAULT_CURSOR_NATIVE_ADD_AGENT_COMMAND_IDS
+      ),
+      DEFAULT_CURSOR_NATIVE_ADD_AGENT_COMMAND_IDS
+    ),
+    cooldownMs: normalizeCursorCooldownMs(
+      settings.get<unknown>(
+        'cursorNativeAddAgentBridge.cooldownMs',
+        DEFAULT_CURSOR_NATIVE_ADD_AGENT_COOLDOWN_MS
+      )
+    ),
+    storageFallbackEnabled: settings.get<boolean>(
+      'cursorNativeAddAgentBridge.storageFallbackEnabled',
+      true
+    ),
+    storageFallbackPollMs: normalizeCursorStorageFallbackPollMs(
+      settings.get<unknown>(
+        'cursorNativeAddAgentBridge.storageFallbackPollMs',
+        DEFAULT_CURSOR_STORAGE_FALLBACK_POLL_MS
+      )
     )
   };
 }
@@ -335,7 +593,89 @@ function readAgentConfigs(): AgentConfig[] {
   });
 }
 
+interface CursorRuntimeAgentOptions {
+  /** Whether Cursor bridging is enabled in settings. */
+  bridgeEnabled: boolean;
+  /** Whether the current host is Cursor. */
+  cursorHost: boolean;
+  /** Current primary workspace folder path when available. */
+  workspaceFolderPath: string | null;
+  /** Active Cursor composers mirrored from workspace storage sync. */
+  runtimeComposers: readonly CursorComposerRecord[];
+}
+
+function withRuntimeCursorAgents(
+  agents: AgentConfig[],
+  options: CursorRuntimeAgentOptions
+): AgentConfig[] {
+  if (!options.bridgeEnabled || !options.cursorHost || options.workspaceFolderPath === null) {
+    return agents;
+  }
+
+  const transcriptRootPath = resolveCursorProjectTranscriptPath(options.workspaceFolderPath);
+  if (transcriptRootPath === null) {
+    return agents;
+  }
+
+  return mergeRuntimeCursorAgents(agents, transcriptRootPath, options.runtimeComposers);
+}
+
+function getPrimaryWorkspaceFolderPath(): string | null {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (workspaceFolder === undefined || workspaceFolder.uri.scheme !== 'file') {
+    return null;
+  }
+
+  return workspaceFolder.uri.fsPath;
+}
+
+function resolveCursorProjectTranscriptPath(workspaceFolderPath: string): string | null {
+  const home = process.env.HOME;
+  if (home === undefined) {
+    return null;
+  }
+
+  const projectsRoot = join(home, '.cursor', 'projects');
+  if (!isExistingDirectory(projectsRoot)) {
+    return null;
+  }
+
+  const projectDirectory = join(projectsRoot, cursorProjectNameFromWorkspacePath(workspaceFolderPath));
+  if (!isExistingDirectory(projectDirectory)) {
+    return null;
+  }
+
+  const transcriptsDirectory = join(projectDirectory, 'agent-transcripts');
+  return normalizePathForCompare(transcriptsDirectory);
+}
+
+function cursorProjectNameFromWorkspacePath(workspaceFolderPath: string): string {
+  return workspaceFolderPath
+    .replace(/^[a-z]:/i, '')
+    .replace(/[\\/]+/g, '-')
+    .replace(/[^a-z0-9-]/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isExistingDirectory(pathValue: string): boolean {
+  if (!existsSync(pathValue)) {
+    return false;
+  }
+
+  try {
+    return statSync(pathValue).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function normalizePathForCompare(pathValue: string): string {
+  return process.platform === 'win32' ? pathValue.toLowerCase() : pathValue;
+}
+
 async function addAgentConfiguration(): Promise<AgentConfig | null> {
+  const existingAgents = readAgentConfigs();
   const name = await vscode.window.showInputBox({
     title: 'CodeOrbit: Agent Name',
     prompt: 'Enter a display name for the agent',
@@ -387,7 +727,6 @@ async function addAgentConfiguration(): Promise<AgentConfig | null> {
   };
 
   const settings = vscode.workspace.getConfiguration('codeorbit');
-  const existingAgents = readAgentConfigs();
   const nextAgents = [...existingAgents.filter((agent) => agent.id !== newAgent.id), newAgent];
 
   await settings.update('agents', nextAgents, vscode.ConfigurationTarget.Workspace);

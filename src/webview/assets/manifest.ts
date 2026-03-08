@@ -1,16 +1,17 @@
 import ambientStationAudioUrl from '../../assets/audio/ambient-station.wav?url';
-import analystIdleUrl from '../../assets/sprites/crew/analyst/idle.svg?url';
-import analystWalkAUrl from '../../assets/sprites/crew/analyst/walk-a.svg?url';
-import analystWalkBUrl from '../../assets/sprites/crew/analyst/walk-b.svg?url';
-import engineerIdleUrl from '../../assets/sprites/crew/engineer/idle.svg?url';
-import engineerWalkAUrl from '../../assets/sprites/crew/engineer/walk-a.svg?url';
-import engineerWalkBUrl from '../../assets/sprites/crew/engineer/walk-b.svg?url';
-import pilotIdleUrl from '../../assets/sprites/crew/pilot/idle.svg?url';
-import pilotWalkAUrl from '../../assets/sprites/crew/pilot/walk-a.svg?url';
-import pilotWalkBUrl from '../../assets/sprites/crew/pilot/walk-b.svg?url';
-import securityIdleUrl from '../../assets/sprites/crew/security/idle.svg?url';
-import securityWalkAUrl from '../../assets/sprites/crew/security/walk-a.svg?url';
-import securityWalkBUrl from '../../assets/sprites/crew/security/walk-b.svg?url';
+import analystIdleUrl from '../../../inspo/Spaceship Pack/ship_5.png?url';
+import analystWalkAUrl from '../../../inspo/Spaceship Pack/ship_5.png?url';
+import analystWalkBUrl from '../../../inspo/Spaceship Pack/ship_6.png?url';
+import engineerIdleUrl from '../../../inspo/Spaceship Pack/ship_1.png?url';
+import engineerWalkAUrl from '../../../inspo/Spaceship Pack/ship_1.png?url';
+import engineerWalkBUrl from '../../../inspo/Spaceship Pack/ship_2.png?url';
+import pilotIdleUrl from '../../../inspo/Spaceship Pack/ship_3.png?url';
+import pilotWalkAUrl from '../../../inspo/Spaceship Pack/ship_3.png?url';
+import pilotWalkBUrl from '../../../inspo/Spaceship Pack/ship_4.png?url';
+import securityIdleUrl from '../../../inspo/Spaceship Pack/ship_2.png?url';
+import securityWalkAUrl from '../../../inspo/Spaceship Pack/ship_2.png?url';
+import securityWalkBUrl from '../../../inspo/Spaceship Pack/ship_1.png?url';
+import stationBackgroundUrl from '../../../inspo/CelestialObjects/CelestialObjects.png?url';
 import tileConduitUrl from '../../assets/sprites/tiles/tile-conduit.svg?url';
 import tileDeckUrl from '../../assets/sprites/tiles/tile-deck.svg?url';
 import tileGrateUrl from '../../assets/sprites/tiles/tile-grate.svg?url';
@@ -78,6 +79,16 @@ export const STATION_TILEMAP_KEY = 'tilemap-station';
  * Tilemap JSON URL emitted by Vite.
  */
 export const STATION_TILEMAP_URL = stationTilemapUrl;
+
+/**
+ * Background texture key used by station scene.
+ */
+export const STATION_BACKGROUND_TEXTURE_KEY = 'station-background';
+
+/**
+ * Background texture URL emitted by Vite.
+ */
+export const STATION_BACKGROUND_TEXTURE_URL = stationBackgroundUrl;
 
 /**
  * Ambient audio tracks available to the station scene.

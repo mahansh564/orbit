@@ -25,6 +25,7 @@ describe('bridge type guards', () => {
 
   it('accepts valid webview->extension messages', () => {
     expect(isWebviewToExtensionMessage({ type: 'ready' })).toBe(true);
+    expect(isWebviewToExtensionMessage({ type: 'open_add_agent' })).toBe(true);
     expect(
       isWebviewToExtensionMessage({
         type: 'persist_state',

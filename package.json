@@ -98,6 +98,41 @@
               }
             }
           }
+        },
+        "codeorbit.cursorNativeAddAgentBridge.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "When running inside Cursor, mirror native add-agent actions into CodeOrbit's add-agent flow."
+        },
+        "codeorbit.cursorNativeAddAgentBridge.commandIds": {
+          "type": "array",
+          "default": [
+            "glass.newAgent",
+            "composer.newAgentChat",
+            "composer.createNew",
+            "composer.createNewComposerTab"
+          ],
+          "description": "Cursor command IDs that should trigger CodeOrbit: Add Agent.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "codeorbit.cursorNativeAddAgentBridge.cooldownMs": {
+          "type": "number",
+          "default": 1200,
+          "minimum": 250,
+          "description": "Minimum milliseconds between bridged native Cursor add-agent triggers."
+        },
+        "codeorbit.cursorNativeAddAgentBridge.storageFallbackEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable deep sync by observing Cursor workspace composer storage for newly created agent sessions."
+        },
+        "codeorbit.cursorNativeAddAgentBridge.storageFallbackPollMs": {
+          "type": "number",
+          "default": 2500,
+          "minimum": 500,
+          "description": "Polling interval in milliseconds for Cursor workspace-storage deep sync."
         }
       }
     }
@@ -107,6 +142,8 @@
     "build:extension": "esbuild src/extension/activate.ts --bundle --outfile=dist/extension/extension.js --platform=node --format=cjs --target=node18 --sourcemap --external:vscode",
     "build:integration-tests": "esbuild tests/integration/runTest.ts tests/integration/suite/index.ts --bundle --platform=node --format=cjs --outbase=tests/integration --outdir=tests/.build/integration --sourcemap --external:vscode --external:@vscode/test-electron",
     "build:webview": "vite build",
+    "release:validate": "node scripts/release-validate.mjs",
+    "release:check": "npm run release:validate && npm run typecheck && npm test && npm run package && node scripts/release-validate.mjs --require-vsix",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:integration": "npm run build:extension && npm run build:integration-tests && node tests/.build/integration/runTest.js",

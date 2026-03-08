@@ -1,6 +1,10 @@
 import { STATION_DIMENSIONS } from '@shared/constants';
 import type { AgentConfig } from '@shared/types';
-import { STATION_AUDIO_ASSETS, STATION_TILEMAP_KEY } from '../assets/manifest';
+import {
+  STATION_AUDIO_ASSETS,
+  STATION_BACKGROUND_TEXTURE_KEY,
+  STATION_TILEMAP_KEY
+} from '../assets/manifest';
 import { CrewFactory } from '../entities/CrewFactory';
 import { CrewUnit } from '../entities/CrewUnit';
 import { OrbitalCycle } from '../environment/OrbitalCycle';
@@ -39,6 +43,15 @@ const QUICK_SELECT_KEYCODES = [
   Phaser.Input.Keyboard.KeyCodes.EIGHT,
   Phaser.Input.Keyboard.KeyCodes.NINE
 ] as const;
+const SPACE_GRADIENT_STEPS = 9;
+
+interface BackgroundStar {
+  x: number;
+  y: number;
+  size: number;
+  color: number;
+  phase: number;
+}
 
 /**
  * Main gameplay scene rendering crew and station systems.
@@ -68,7 +81,11 @@ export class StationScene extends Phaser.Scene {
   };
   private quickSelectKeys: Phaser.Input.Keyboard.Key[] = [];
   private escapeKey: Phaser.Input.Keyboard.Key | null = null;
+  private addAgentKey: Phaser.Input.Keyboard.Key | null = null;
   private tabSelectionHandler: ((event: KeyboardEvent) => void) | null = null;
+  private dynamicSkyLayer: Phaser.GameObjects.Graphics | null = null;
+  private viewportFrame: Phaser.GameObjects.Graphics | null = null;
+  private readonly starPoints: BackgroundStar[] = [];
 
   /**
    * Creates the station scene.
@@ -88,7 +105,9 @@ export class StationScene extends Phaser.Scene {
     this.stationAlerts = new StationAlerts(this);
     this.stationInfrastructure = new StationInfrastructure(this);
     this.orbitalCycle = new OrbitalCycle(this);
-    this.hud = new HUD(this);
+    this.hud = new HUD(this, () => {
+      state.requestAddAgent();
+    });
     this.tooltip = new Tooltip(this);
     this.stationAlerts.setEnabled(state.getConfig().stationEffectsEnabled);
     this.startAmbientTrack();
@@ -121,6 +140,8 @@ export class StationScene extends Phaser.Scene {
       }
 
       this.teardownKeyboardControls();
+      this.dynamicSkyLayer?.destroy();
+      this.viewportFrame?.destroy();
       this.hud.destroy();
       this.tooltip.destroy();
     });
@@ -164,6 +185,7 @@ export class StationScene extends Phaser.Scene {
     this.stationAlerts.update(time);
     this.stationInfrastructure.update(delta);
     this.orbitalCycle.update(time);
+    this.updateBackdropEffects(time);
     this.hud.setSelectedAgent(this.selectedAgentId);
     this.hud.update(this.crewUnits);
     this.tooltip.update(this.crewUnits);
@@ -226,6 +248,30 @@ export class StationScene extends Phaser.Scene {
   }
 
   private drawBackground(): void {
+    const background = this.add.image(
+      STATION_DIMENSIONS.width / 2,
+      STATION_DIMENSIONS.height / 2,
+      STATION_BACKGROUND_TEXTURE_KEY
+    );
+    background.setDepth(-5);
+    background.setDisplaySize(STATION_DIMENSIONS.width, STATION_DIMENSIONS.height);
+    background.setAlpha(0.92);
+
+    const backdrop = this.add.graphics();
+    backdrop.setDepth(-4);
+    backdrop.fillStyle(0x030519, 0.72);
+    backdrop.fillRect(0, 0, STATION_DIMENSIONS.width, STATION_DIMENSIONS.height);
+    for (let i = 0; i < SPACE_GRADIENT_STEPS; i += 1) {
+      const bandHeight = STATION_DIMENSIONS.height / SPACE_GRADIENT_STEPS;
+      const alpha = 0.08 + i * 0.015;
+      backdrop.fillStyle(0x1e2b8f, alpha);
+      backdrop.fillRect(0, Math.floor(i * bandHeight), STATION_DIMENSIONS.width, Math.ceil(bandHeight));
+    }
+    this.drawPixelStars(backdrop);
+    this.drawOrbitalBodies(backdrop);
+    this.dynamicSkyLayer = this.add.graphics();
+    this.dynamicSkyLayer.setDepth(-3);
+
     const loadedTilemap = readTilemapAsset(this.cache.json.get(STATION_TILEMAP_KEY));
     const tileSize = loadedTilemap?.tileSize ?? STATION_DIMENSIONS.tileSize;
     const columns = loadedTilemap?.width ?? Math.ceil(STATION_DIMENSIONS.width / tileSize);
@@ -243,17 +289,144 @@ export class StationScene extends Phaser.Scene {
           textureKey
         );
         image.setDepth(0);
+        image.setAlpha(0.93);
       }
     }
 
     const atmosphere = this.add.graphics();
     atmosphere.setDepth(1);
-    atmosphere.fillStyle(0x142334, 0.26);
+    atmosphere.fillStyle(0x0a0f3a, 0.38);
     atmosphere.fillRect(0, 0, STATION_DIMENSIONS.width, STATION_DIMENSIONS.height);
-    atmosphere.fillStyle(0x66dfff, 0.11);
-    atmosphere.fillRect(0, 0, STATION_DIMENSIONS.width, 92);
-    atmosphere.fillStyle(0x0b1728, 0.55);
-    atmosphere.fillRect(0, STATION_DIMENSIONS.height - 88, STATION_DIMENSIONS.width, 88);
+    atmosphere.fillStyle(0x89a9ff, 0.16);
+    atmosphere.fillRect(0, 0, STATION_DIMENSIONS.width, 78);
+    atmosphere.fillStyle(0x0d164f, 0.45);
+    atmosphere.fillRect(0, STATION_DIMENSIONS.height - 108, STATION_DIMENSIONS.width, 108);
+    atmosphere.lineStyle(2, 0x9ad4ff, 0.28);
+    for (let y = 0; y < STATION_DIMENSIONS.height; y += 22) {
+      atmosphere.beginPath();
+      atmosphere.moveTo(0, y);
+      atmosphere.lineTo(STATION_DIMENSIONS.width, y);
+      atmosphere.strokePath();
+    }
+
+    this.drawViewportFrame();
+  }
+
+  private drawPixelStars(graphics: Phaser.GameObjects.Graphics): void {
+    const starColors = [0xd3deff, 0xf3f6ff, 0xb2fff8, 0xfff8bc];
+    this.starPoints.length = 0;
+
+    for (let i = 0; i < 120; i += 1) {
+      const x = (i * 79 + (i % 5) * 31) % STATION_DIMENSIONS.width;
+      const y = (i * 47 + (i % 3) * 17) % 220;
+      const color = starColors[i % starColors.length] ?? 0xffffff;
+      const size = i % 9 === 0 ? 2 : 1;
+      this.starPoints.push({ x, y, size, color, phase: i * 0.53 });
+      graphics.fillStyle(color, i % 6 === 0 ? 0.95 : 0.8);
+      graphics.fillRect(x, y, size, size);
+      if (size > 1) {
+        graphics.fillRect(x - 1, y, 1, 1);
+        graphics.fillRect(x + 2, y, 1, 1);
+        graphics.fillRect(x, y - 1, 1, 1);
+        graphics.fillRect(x, y + 2, 1, 1);
+      }
+    }
+  }
+
+  private drawOrbitalBodies(graphics: Phaser.GameObjects.Graphics): void {
+    graphics.fillStyle(0x8da4ff, 0.34);
+    graphics.fillCircle(STATION_DIMENSIONS.width - 120, 84, 28);
+    graphics.fillStyle(0xd4e1ff, 0.48);
+    graphics.fillCircle(STATION_DIMENSIONS.width - 114, 78, 17);
+    graphics.lineStyle(2, 0x7ee7ff, 0.45);
+    graphics.strokeEllipse(STATION_DIMENSIONS.width - 120, 84, 84, 26);
+
+    graphics.fillStyle(0x5f4cff, 0.24);
+    graphics.fillCircle(116, 88, 18);
+    graphics.fillStyle(0xa299ff, 0.36);
+    graphics.fillCircle(112, 84, 11);
+  }
+
+  private updateBackdropEffects(now: number): void {
+    if (this.dynamicSkyLayer === null) {
+      return;
+    }
+
+    this.dynamicSkyLayer.clear();
+
+    for (let i = 0; i < this.starPoints.length; i += 1) {
+      const star = this.starPoints[i];
+      if (star === undefined || i % 2 !== 0) {
+        continue;
+      }
+
+      const twinkle = 0.3 + Math.sin(now * 0.002 + star.phase) * 0.36;
+      if (twinkle <= 0.25) {
+        continue;
+      }
+
+      this.dynamicSkyLayer.fillStyle(star.color, Math.min(0.96, twinkle));
+      this.dynamicSkyLayer.fillRect(star.x, star.y, star.size, star.size);
+      if (star.size > 1 && twinkle > 0.66) {
+        this.dynamicSkyLayer.fillRect(star.x - 1, star.y, 1, 1);
+        this.dynamicSkyLayer.fillRect(star.x + 2, star.y, 1, 1);
+        this.dynamicSkyLayer.fillRect(star.x, star.y - 1, 1, 1);
+        this.dynamicSkyLayer.fillRect(star.x, star.y + 2, 1, 1);
+      }
+    }
+
+    const cometX = ((now / 4) % (STATION_DIMENSIONS.width + 180)) - 120;
+    const cometY = 28 + Math.sin(now * 0.0007) * 26;
+    for (let i = 0; i < 18; i += 1) {
+      const alpha = 0.62 - i * 0.03;
+      if (alpha <= 0) {
+        continue;
+      }
+
+      this.dynamicSkyLayer.fillStyle(0xe1f6ff, alpha);
+      this.dynamicSkyLayer.fillRect(cometX - i * 3, cometY + i, i < 3 ? 2 : 1, 1);
+    }
+
+    const droneX = 86 + Math.sin(now * 0.0012) * 16;
+    const droneY = 66 + Math.cos(now * 0.0014) * 10;
+    this.dynamicSkyLayer.fillStyle(0xc4dcff, 0.9);
+    this.dynamicSkyLayer.fillRect(droneX, droneY, 6, 2);
+    this.dynamicSkyLayer.fillRect(droneX + 2, droneY - 1, 2, 1);
+    this.dynamicSkyLayer.fillStyle(0x92f6ff, 0.95);
+    this.dynamicSkyLayer.fillRect(droneX - 2, droneY + 1, 2, 1);
+    this.dynamicSkyLayer.fillRect(droneX + 6, droneY + 1, 2, 1);
+
+    const moonX = STATION_DIMENSIONS.width - 86 + Math.sin(now * 0.0009) * 8;
+    const moonY = 154 + Math.cos(now * 0.0008) * 6;
+    this.dynamicSkyLayer.fillStyle(0xc9cfff, 0.45);
+    this.dynamicSkyLayer.fillRect(moonX + 2, moonY, 4, 4);
+    this.dynamicSkyLayer.fillRect(moonX + 1, moonY + 1, 6, 2);
+    this.dynamicSkyLayer.fillStyle(0xedf5ff, 0.48);
+    this.dynamicSkyLayer.fillRect(moonX + 2, moonY + 1, 2, 1);
+  }
+
+  private drawViewportFrame(): void {
+    this.viewportFrame = this.add.graphics();
+    this.viewportFrame.setDepth(50);
+
+    const frame = this.viewportFrame;
+    frame.fillStyle(0x141b5a, 0.68);
+    frame.fillRect(0, 0, STATION_DIMENSIONS.width, 6);
+    frame.fillRect(0, STATION_DIMENSIONS.height - 6, STATION_DIMENSIONS.width, 6);
+    frame.fillRect(0, 0, 6, STATION_DIMENSIONS.height);
+    frame.fillRect(STATION_DIMENSIONS.width - 6, 0, 6, STATION_DIMENSIONS.height);
+
+    frame.fillStyle(0x9eb8ff, 0.75);
+    frame.fillRect(7, 7, STATION_DIMENSIONS.width - 14, 1);
+    frame.fillRect(7, STATION_DIMENSIONS.height - 8, STATION_DIMENSIONS.width - 14, 1);
+    frame.fillRect(7, 7, 1, STATION_DIMENSIONS.height - 14);
+    frame.fillRect(STATION_DIMENSIONS.width - 8, 7, 1, STATION_DIMENSIONS.height - 14);
+
+    frame.fillStyle(0xe6f2ff, 0.95);
+    frame.fillRect(8, 8, 8, 2);
+    frame.fillRect(STATION_DIMENSIONS.width - 16, 8, 8, 2);
+    frame.fillRect(8, STATION_DIMENSIONS.height - 10, 8, 2);
+    frame.fillRect(STATION_DIMENSIONS.width - 16, STATION_DIMENSIONS.height - 10, 8, 2);
   }
 
   private startAmbientTrack(): void {
@@ -300,6 +473,7 @@ export class StationScene extends Phaser.Scene {
       right: keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D)
     };
     this.escapeKey = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+    this.addAgentKey = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     this.quickSelectKeys = QUICK_SELECT_KEYCODES.map((keycode) => keyboard.addKey(keycode));
     this.tabSelectionHandler = (event: KeyboardEvent) => {
       event.preventDefault();
@@ -321,6 +495,11 @@ export class StationScene extends Phaser.Scene {
   private handleKeyboardSelection(): void {
     if (this.escapeKey !== null && Phaser.Input.Keyboard.JustDown(this.escapeKey)) {
       this.setSelectedAgent(null);
+    }
+
+    if (this.addAgentKey !== null && Phaser.Input.Keyboard.JustDown(this.addAgentKey)) {
+      getStationState().requestAddAgent();
+      return;
     }
 
     const agentIds = this.getAgentIds();

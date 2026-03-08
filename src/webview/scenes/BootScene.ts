@@ -1,6 +1,8 @@
 import {
   CREW_TEXTURE_ASSETS,
   STATION_AUDIO_ASSETS,
+  STATION_BACKGROUND_TEXTURE_KEY,
+  STATION_BACKGROUND_TEXTURE_URL,
   STATION_TILEMAP_KEY,
   STATION_TILEMAP_URL,
   TILE_TEXTURE_ASSETS
@@ -22,6 +24,8 @@ export class BootScene extends Phaser.Scene {
    * Preloads static textures, tilemap, and ambient audio assets.
    */
   preload(): void {
+    this.load.image(STATION_BACKGROUND_TEXTURE_KEY, toPhaserSafeDataUri(STATION_BACKGROUND_TEXTURE_URL));
+
     for (const tile of TILE_TEXTURE_ASSETS) {
       this.load.svg(tile.key, toPhaserSafeDataUri(tile.url), {
         width: tile.width,

@@ -76,4 +76,57 @@ describe('parser', () => {
       expect(parsed.prompt).toContain('deployment environment');
     }
   });
+
+  it('infers input request action from Cursor assistant transcript lines', () => {
+    const line = JSON.stringify({
+      role: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'text',
+            text: 'I need your input before I continue. Can you confirm the target environment?'
+          }
+        ]
+      }
+    });
+
+    const parsed = parseAgentEventLine(line, { id: 'cursor-agent', name: 'Cursor Agent' });
+    expect(parsed).not.toBeNull();
+    expect(parsed?.kind).toBe('input_request');
+    expect(parsed?.agentId).toBe('cursor-agent');
+  });
+
+  it('infers read action from Cursor assistant transcript lines', () => {
+    const line = JSON.stringify({
+      role: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'text',
+            text: 'Let me inspect src/extension/activate.ts and trace how this flow is wired.'
+          }
+        ]
+      }
+    });
+
+    const parsed = parseAgentEventLine(line, { id: 'cursor-agent', name: 'Cursor Agent' });
+    expect(parsed).not.toBeNull();
+    expect(parsed?.kind).toBe('read');
+    if (parsed?.kind === 'read') {
+      expect(parsed.path).toContain('/extension/activate.ts');
+    }
+  });
+
+  it('treats Cursor user transcript lines as idle events', () => {
+    const line = JSON.stringify({
+      role: 'user',
+      message: {
+        content: [{ type: 'text', text: 'Please continue and use production credentials.' }]
+      }
+    });
+
+    const parsed = parseAgentEventLine(line, { id: 'cursor-agent', name: 'Cursor Agent' });
+    expect(parsed).not.toBeNull();
+    expect(parsed?.kind).toBe('idle');
+  });
 });

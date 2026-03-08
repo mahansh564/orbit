@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, readdirSync, statSync, watch } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { AgentConfig } from '@shared/types';
 import { parseAgentEventLine } from '../parser';
@@ -40,6 +40,8 @@ class JsonlSourceInstance implements AgentSourceAdapterInstance {
   private readonly offsets = new Map<string, number>();
   private readonly readingFiles = new Set<string>();
   private readonly pendingFiles = new Set<string>();
+  private directoryPollTimer: NodeJS.Timeout | null = null;
+  private rootDirectoryPath: string | null = null;
   private watchers: FSWatcher[] = [];
 
   /**
@@ -85,91 +87,191 @@ class JsonlSourceInstance implements AgentSourceAdapterInstance {
   }
 
   private initialize(): void {
+    const transcriptPath = normalizeFsPath(this.agent.transcriptPath);
+
     try {
-      const stats = statSync(this.agent.transcriptPath);
+      const stats = statSync(transcriptPath);
       if (stats.isDirectory()) {
-        this.attachDirectoryWatcher(this.agent.transcriptPath);
+        this.attachDirectoryWatcher(transcriptPath);
         return;
       }
 
-      this.attachFileWatcher(this.agent.transcriptPath);
+      this.attachFileWatcher(transcriptPath);
     } catch (error) {
+      if (looksLikeDirectoryPath(transcriptPath)) {
+        this.attachMissingDirectoryWatcher(transcriptPath);
+        return;
+      }
+
       this.reportError(error);
     }
   }
 
   private attachFileWatcher(filePath: string): void {
-    this.initializeOffset(filePath);
+    const normalizedPath = normalizeFsPath(filePath);
+    this.initializeOffset(normalizedPath, false);
 
-    const watcher = watch(filePath, () => {
-      this.scheduleRead(filePath);
+    const watcher = watch(normalizedPath, () => {
+      this.scheduleRead(normalizedPath);
     });
 
-    this.watchers.push(watcher);
+    this.registerWatcher(watcher);
   }
 
   private attachDirectoryWatcher(directoryPath: string): void {
-    if (existsSync(directoryPath)) {
-      this.initializeDirectoryOffsets(directoryPath);
+    const normalizedDirectory = normalizeFsPath(directoryPath);
+    if (!existsSync(normalizedDirectory)) {
+      this.attachMissingDirectoryWatcher(normalizedDirectory);
+      return;
     }
 
-    const watcher = watch(directoryPath, (_eventType, filename) => {
+    this.rootDirectoryPath = normalizedDirectory;
+    this.scanDirectory(normalizedDirectory, false, false);
+
+    const watcher = watch(normalizedDirectory, (_eventType, filename) => {
       if (filename === null) {
         return;
       }
 
-      const candidatePath = join(directoryPath, filename.toString());
-      if (!candidatePath.endsWith('.jsonl')) {
+      const candidatePath = normalizeFsPath(join(normalizedDirectory, filename.toString()));
+      if (!isWithinDirectory(candidatePath, normalizedDirectory)) {
         return;
       }
 
-      this.initializeOffset(candidatePath);
-      this.scheduleRead(candidatePath);
+      this.handleDirectoryChange(candidatePath);
     });
 
-    this.watchers.push(watcher);
+    this.registerWatcher(watcher);
+    this.startDirectoryPolling(normalizedDirectory);
   }
 
-  private initializeDirectoryOffsets(directoryPath: string): void {
+  private attachMissingDirectoryWatcher(missingDirectoryPath: string): void {
+    const normalizedMissingDirectory = normalizeFsPath(missingDirectoryPath);
+    if (isExistingDirectory(normalizedMissingDirectory)) {
+      this.attachDirectoryWatcher(normalizedMissingDirectory);
+      return;
+    }
+
+    const parentDirectory = normalizeFsPath(dirname(normalizedMissingDirectory));
+    if (!isExistingDirectory(parentDirectory)) {
+      return;
+    }
+
+    const watcher = watch(parentDirectory, (_eventType, filename) => {
+      if (filename === null) {
+        return;
+      }
+
+      const candidatePath = normalizeFsPath(join(parentDirectory, filename.toString()));
+      if (candidatePath !== normalizedMissingDirectory) {
+        return;
+      }
+
+      if (!isExistingDirectory(normalizedMissingDirectory)) {
+        return;
+      }
+
+      this.teardownWatchers();
+      this.attachDirectoryWatcher(normalizedMissingDirectory);
+    });
+
+    this.registerWatcher(watcher);
+  }
+
+  private handleDirectoryChange(candidatePath: string): void {
     try {
-      const directoryStats = statSync(directoryPath);
+      const normalizedCandidate = normalizeFsPath(candidatePath);
+      const candidateStats = statSync(normalizedCandidate);
+      if (candidateStats.isDirectory()) {
+        this.scanDirectory(normalizedCandidate, true, false);
+        return;
+      }
+
+      if (!candidateStats.isFile() || !isJsonlTranscriptFile(normalizedCandidate)) {
+        return;
+      }
+
+      this.initializeOffset(normalizedCandidate, true);
+      this.scheduleRead(normalizedCandidate);
+    } catch {
+      // Ignore delete/rename races from fs.watch events.
+    }
+  }
+
+  private scanDirectory(
+    directoryPath: string,
+    readNewFilesFromStart: boolean,
+    scheduleKnownReads: boolean
+  ): void {
+    try {
+      const normalizedDirectory = normalizeFsPath(directoryPath);
+      const directoryStats = statSync(normalizedDirectory);
       if (!directoryStats.isDirectory()) {
         return;
       }
 
-      for (const entryName of readdirSync(directoryPath)) {
-        const filePath = join(directoryPath, entryName);
-        if (!filePath.endsWith('.jsonl')) {
+      for (const entry of readdirSync(normalizedDirectory, { withFileTypes: true })) {
+        const entryPath = normalizeFsPath(join(normalizedDirectory, entry.name));
+        if (entry.isDirectory()) {
+          this.scanDirectory(entryPath, readNewFilesFromStart, scheduleKnownReads);
           continue;
         }
 
-        this.initializeOffset(filePath);
+        if (!entry.isFile() || !isJsonlTranscriptFile(entryPath)) {
+          continue;
+        }
+
+        const knownFile = this.offsets.has(entryPath);
+        if (!knownFile) {
+          this.initializeOffset(entryPath, readNewFilesFromStart);
+          if (readNewFilesFromStart) {
+            this.scheduleRead(entryPath);
+          }
+          continue;
+        }
+
+        if (scheduleKnownReads) {
+          this.scheduleRead(entryPath);
+        }
       }
     } catch (error) {
       this.reportError(error);
     }
   }
 
-  private initializeOffset(filePath: string): void {
-    if (this.offsets.has(filePath)) {
+  private startDirectoryPolling(directoryPath: string): void {
+    if (this.directoryPollTimer !== null) {
+      clearInterval(this.directoryPollTimer);
+    }
+
+    this.directoryPollTimer = setInterval(() => {
+      this.scanDirectory(directoryPath, true, true);
+    }, 1200);
+  }
+
+  private initializeOffset(filePath: string, readFromStart: boolean): void {
+    const normalizedPath = normalizeFsPath(filePath);
+    if (this.offsets.has(normalizedPath)) {
       return;
     }
 
     try {
-      const fileStats = statSync(filePath);
-      this.offsets.set(filePath, fileStats.size);
+      const fileStats = statSync(normalizedPath);
+      this.offsets.set(normalizedPath, readFromStart ? 0 : fileStats.size);
     } catch {
-      this.offsets.set(filePath, 0);
+      this.offsets.set(normalizedPath, 0);
     }
   }
 
   private scheduleRead(filePath: string): void {
-    if (this.readingFiles.has(filePath)) {
-      this.pendingFiles.add(filePath);
+    const normalizedPath = normalizeFsPath(filePath);
+
+    if (this.readingFiles.has(normalizedPath)) {
+      this.pendingFiles.add(normalizedPath);
       return;
     }
 
-    void this.readAppendedLines(filePath);
+    void this.readAppendedLines(normalizedPath);
   }
 
   private async readAppendedLines(filePath: string): Promise<void> {
@@ -223,7 +325,20 @@ class JsonlSourceInstance implements AgentSourceAdapterInstance {
       watcher.close();
     }
 
+    if (this.directoryPollTimer !== null) {
+      clearInterval(this.directoryPollTimer);
+      this.directoryPollTimer = null;
+    }
+
     this.watchers = [];
+    this.rootDirectoryPath = null;
+  }
+
+  private registerWatcher(watcher: FSWatcher): void {
+    watcher.on('error', (error) => {
+      this.reportError(error);
+    });
+    this.watchers.push(watcher);
   }
 
   private reportError(error: unknown): void {
@@ -237,5 +352,42 @@ class JsonlSourceInstance implements AgentSourceAdapterInstance {
     }
 
     this.onError(new Error(String(error)));
+  }
+}
+
+function isJsonlTranscriptFile(filePath: string): boolean {
+  return filePath.endsWith('.jsonl');
+}
+
+function normalizeFsPath(pathValue: string): string {
+  return resolvePath(pathValue);
+}
+
+function isWithinDirectory(candidatePath: string, directoryPath: string): boolean {
+  const normalizedDirectory =
+    process.platform === 'win32' ? directoryPath.toLowerCase() : directoryPath;
+  const normalizedCandidate =
+    process.platform === 'win32' ? candidatePath.toLowerCase() : candidatePath;
+
+  return (
+    normalizedCandidate === normalizedDirectory ||
+    normalizedCandidate.startsWith(`${normalizedDirectory}/`) ||
+    normalizedCandidate.startsWith(`${normalizedDirectory}\\`)
+  );
+}
+
+function looksLikeDirectoryPath(pathValue: string): boolean {
+  return !pathValue.endsWith('.jsonl');
+}
+
+function isExistingDirectory(pathValue: string): boolean {
+  if (!existsSync(pathValue)) {
+    return false;
+  }
+
+  try {
+    return statSync(pathValue).isDirectory();
+  } catch {
+    return false;
   }
 }

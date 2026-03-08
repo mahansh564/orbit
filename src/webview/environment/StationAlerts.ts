@@ -119,16 +119,16 @@ export class StationAlerts {
 
   private drawScanSweep(now: number): void {
     const sweepX = (now / 3) % 1080 - 120;
-    this.scanLayer.fillStyle(0x7be8ff, 0.09);
+    this.scanLayer.fillStyle(0x9fc4ff, 0.1);
     this.scanLayer.fillTriangle(sweepX, 0, sweepX + 120, 0, sweepX - 80, 540);
   }
 
   private drawAlarm(now: number): void {
     const pulse = 0.16 + (Math.sin(now * 0.02) + 1) * 0.07;
-    this.alarmLayer.fillStyle(0xff365b, pulse);
+    this.alarmLayer.fillStyle(0xff3a62, pulse);
     this.alarmLayer.fillRect(0, 0, 960, 540);
 
-    this.alarmLayer.lineStyle(3, 0xffcf4a, 0.65);
+    this.alarmLayer.lineStyle(3, 0xffe08c, 0.65);
     const offset = (now / 20) % 120;
     for (let i = -1; i < 10; i += 1) {
       const x = i * 120 + offset;
@@ -141,16 +141,16 @@ export class StationAlerts {
 
   private drawPowerGlow(now: number): void {
     const pulse = 0.1 + (Math.sin(now * 0.006) + 1) * 0.06;
-    this.powerLayer.fillStyle(0x68e3ff, pulse);
+    this.powerLayer.fillStyle(0x879dff, pulse);
     this.powerLayer.fillRect(0, 0, 960, 540);
-    this.powerLayer.fillStyle(0x9dfff5, pulse + 0.03);
+    this.powerLayer.fillStyle(0xcce7ff, pulse + 0.03);
     this.powerLayer.fillCircle(830, 90, 54);
   }
 
   private drawJumpLane(now: number): void {
     const centerX = 480;
     const centerY = 270;
-    const colors = [0x6ae7ff, 0x80ffc5, 0xfff088, 0xff9fa8];
+    const colors = [0x9abbff, 0x9ef4ff, 0xfff2a4, 0xffa8be];
 
     for (let i = 0; i < colors.length; i += 1) {
       const color = colors[i] ?? 0xffffff;

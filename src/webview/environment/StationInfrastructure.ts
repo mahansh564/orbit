@@ -72,9 +72,9 @@ export class StationInfrastructure {
     const y = Phaser.Math.Between(320, 510);
     const radius = Phaser.Math.Between(3, 6);
 
-    const core = this.scene.add.circle(x, y, radius, 0x7de8ff, 0.96);
-    const ring = this.scene.add.circle(x, y, radius + 4, 0x7de8ff, 0.2);
-    ring.setStrokeStyle(1, 0xb9f5ff, 0.8);
+    const core = this.scene.add.circle(x, y, radius, 0xa8bcff, 0.96);
+    const ring = this.scene.add.circle(x, y, radius + 4, 0xa8bcff, 0.2);
+    ring.setStrokeStyle(1, 0xd5e6ff, 0.82);
     core.setDepth(8);
     ring.setDepth(7);
 
@@ -91,8 +91,8 @@ export class StationInfrastructure {
       return;
     }
 
-    node.core.setFillStyle(0x72849d, 0.75);
-    node.ring.setStrokeStyle(1, 0x4a5668, 0.7);
+    node.core.setFillStyle(0x6b6d91, 0.75);
+    node.ring.setStrokeStyle(1, 0x3d3f5a, 0.7);
     node.life = Math.min(node.life, 2500);
     this.nodes.unshift(node);
   }

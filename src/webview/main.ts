@@ -30,7 +30,7 @@ const game = new Phaser.Game({
   parent: 'app',
   width: STATION_DIMENSIONS.width,
   height: STATION_DIMENSIONS.height,
-  backgroundColor: '#101619',
+  backgroundColor: '#03043b',
   pixelArt: true,
   fps: {
     target: MAX_FPS,
