@@ -96,6 +96,48 @@ describe('parser', () => {
     expect(parsed?.agentId).toBe('cursor-agent');
   });
 
+  it('infers input request from planning phrasing requesting confirmation', () => {
+    const line = JSON.stringify({
+      role: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'text',
+            text: 'Adjusting plan and requesting confirmation before I proceed.'
+          }
+        ]
+      }
+    });
+
+    const parsed = parseAgentEventLine(line, { id: 'cursor-agent', name: 'Cursor Agent' });
+    expect(parsed?.kind).toBe('input_request');
+  });
+
+  it('infers input request from request_user_input tool-call payloads', () => {
+    const line = JSON.stringify({
+      role: 'assistant',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            name: 'request_user_input',
+            input: {
+              questions: [
+                {
+                  question: 'Which approach should I take?'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    });
+
+    const parsed = parseAgentEventLine(line, { id: 'cursor-agent', name: 'Cursor Agent' });
+    expect(parsed?.kind).toBe('input_request');
+    expect(parsed?.agentId).toBe('cursor-agent');
+  });
+
   it('infers read action from Cursor assistant transcript lines', () => {
     const line = JSON.stringify({
       role: 'assistant',

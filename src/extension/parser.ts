@@ -253,8 +253,7 @@ export function isRawTranscriptEvent(value: unknown): value is RawTranscriptEven
 
 function inferTranscriptAction(event: RawTranscriptEvent): AgentAction | null {
   const role = asOptionalString(event.role)?.toLowerCase();
-  const text = extractTranscriptText(event.message);
-  if (role === undefined || text === undefined) {
+  if (role === undefined) {
     return null;
   }
 
@@ -263,6 +262,16 @@ function inferTranscriptAction(event: RawTranscriptEvent): AgentAction | null {
   }
 
   if (role !== 'assistant') {
+    return null;
+  }
+
+  const toolNames = extractToolNamesFromMessage(event.message);
+  if (toolNames.some((name) => isInputRequestToolName(name))) {
+    return 'input_request';
+  }
+
+  const text = extractTranscriptText(event.message);
+  if (text === undefined) {
     return null;
   }
 
@@ -354,8 +363,15 @@ function extractTranscriptText(value: unknown): string | undefined {
 function looksLikeInputRequest(text: string): boolean {
   if (
     /\b(need|needs)\s+(user|your)\s+(input|approval|confirmation)\b/.test(text) ||
+    /\b(need|needs)\s+you\s+to\s+(confirm|choose|approve|decide)\b/.test(text) ||
     /\b(please|kindly)\s+(provide|confirm|choose|share)\b/.test(text) ||
-    /\b(do you want me to|which option should|what should i|can you confirm)\b/.test(text)
+    /\b(do you want me to|which option should|what should i|can you confirm)\b/.test(text) ||
+    /\b(request(?:ing)?|await(?:ing)?)\s+(?:your\s+)?(input|approval|confirmation|response)\b/.test(
+      text
+    ) ||
+    /\bbefore\s+i\s+proceed\b/.test(text) ||
+    /\blet\s+me\s+know\s+(which|if|whether)\b/.test(text) ||
+    /\b(choose|select)\s+(one|an|a)?\s*option\b/.test(text)
   ) {
     return true;
   }
@@ -363,6 +379,61 @@ function looksLikeInputRequest(text: string): boolean {
   return (
     text.includes('?') &&
     /\b(can you|could you|would you|should i|may i|approve|confirm)\b/.test(text)
+  );
+}
+
+function extractToolNamesFromMessage(value: unknown): string[] {
+  const names: string[] = [];
+  const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+
+  while (stack.length > 0) {
+    const next = stack.pop();
+    if (next === undefined || next.depth > 8) {
+      continue;
+    }
+
+    const current = next.value;
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        stack.push({ value: item, depth: next.depth + 1 });
+      }
+      continue;
+    }
+
+    if (typeof current !== 'object' || current === null) {
+      continue;
+    }
+
+    for (const [key, item] of Object.entries(current)) {
+      if (
+        typeof item === 'string' &&
+        (key === 'name' ||
+          key === 'tool' ||
+          key === 'toolName' ||
+          key === 'tool_name' ||
+          key === 'functionName' ||
+          key === 'function_name')
+      ) {
+        names.push(item);
+      }
+      stack.push({ value: item, depth: next.depth + 1 });
+    }
+  }
+
+  return names;
+}
+
+function isInputRequestToolName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  return (
+    normalized === 'request_user_input' ||
+    normalized.includes('request_user_input') ||
+    normalized.includes('needs_input') ||
+    normalized.includes('ask_input')
   );
 }
 

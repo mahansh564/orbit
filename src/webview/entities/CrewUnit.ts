@@ -89,6 +89,58 @@ export function applyActionToSnapshot(
 }
 
 /**
+ * Applies an explicit XP reward to an existing snapshot.
+ *
+ * @param snapshot Existing crew snapshot.
+ * @param xpReward XP reward amount.
+ * @param now Current timestamp.
+ * @returns Updated snapshot with XP/level/mood deltas.
+ */
+export function applyRewardToSnapshot(
+  snapshot: CrewSnapshot,
+  xpReward: number,
+  now: number
+): CrewSnapshot {
+  const reward = Math.max(0, Math.round(xpReward));
+  const xp = snapshot.xp + reward;
+  return {
+    ...snapshot,
+    xp,
+    level: levelFromXp(xp),
+    mood: clamp(snapshot.mood + Math.max(1, Math.ceil(reward / 3)), MOOD_BOUNDS.min, MOOD_BOUNDS.max),
+    updatedAt: now
+  };
+}
+
+/**
+ * Derives whether the crew should keep showing an input-request beacon.
+ *
+ * @param previous Previous requesting-input value.
+ * @param action Optional incoming action. Pass null when there is no new event.
+ * @param metadataSource Optional event metadata source identifier.
+ * @returns Next requesting-input value.
+ */
+export function deriveRequestingInputFlag(
+  previous: boolean,
+  action: AgentAction | null,
+  metadataSource?: string
+): boolean {
+  if (action === null) {
+    return previous;
+  }
+
+  if (action === 'input_request') {
+    return true;
+  }
+
+  if (previous && action === 'terminal' && metadataSource === 'cursor_composer_storage') {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Computes crew level from XP value.
  *
  * @param xp Experience points.
@@ -149,20 +201,20 @@ export class CrewUnit {
     this.selectionRing.setDepth(18);
     this.selectionRing.setVisible(false);
 
-    this.commsHalo = scene.add.circle(x + 17, y - 25, 8, 0x95a6ff, 0.2);
-    this.commsHalo.setStrokeStyle(2, 0xd8e6ff, 0.92);
+    this.commsHalo = scene.add.circle(x + 17, y - 25, 8, 0xff4c72, 0.36);
+    this.commsHalo.setStrokeStyle(2, 0xffc5d2, 0.96);
     this.commsHalo.setDepth(33);
     this.commsHalo.setVisible(false);
 
-    this.commsCore = scene.add.circle(x + 17, y - 25, 4, 0xffffff, 0.96);
+    this.commsCore = scene.add.circle(x + 17, y - 25, 4.5, 0xffdce4, 1);
     this.commsCore.setDepth(34);
     this.commsCore.setVisible(false);
 
     this.commsText = scene.add.text(x + 17, y - 25, '?', {
       fontFamily: '"Trebuchet MS", "Lucida Sans Unicode", sans-serif',
-      fontSize: '11px',
+      fontSize: '12px',
       fontStyle: 'bold',
-      color: '#11184f'
+      color: '#6f0018'
     });
     this.commsText.setOrigin(0.5);
     this.commsText.setDepth(35);
@@ -192,20 +244,36 @@ export class CrewUnit {
    */
   applyEvent(event: AgentEvent): boolean {
     const next = applyActionToSnapshot(this.snapshot, event.kind, event.ts);
-    let requestingInput = this.snapshot.requestingInput;
-
-    if (event.kind === 'input_request') {
-      requestingInput = true;
-    } else if (event.kind !== 'idle') {
-      requestingInput = false;
-    }
+    const metadataSource =
+      typeof event.metadata?.source === 'string' ? event.metadata.source : undefined;
 
     this.snapshot = {
       ...next,
-      requestingInput
+      requestingInput: deriveRequestingInputFlag(
+        this.snapshot.requestingInput,
+        event.kind,
+        metadataSource
+      )
     };
     this.playStateAnimation(this.snapshot.state);
     this.updateCommsBeacon(event.ts);
+    return true;
+  }
+
+  /**
+   * Applies a mission reward XP bonus to this crew unit.
+   *
+   * @param xpReward XP reward amount.
+   * @param now Current timestamp.
+   * @returns True when state changed.
+   */
+  applyMissionReward(xpReward: number, now: number): boolean {
+    if (xpReward <= 0) {
+      return false;
+    }
+
+    this.snapshot = applyRewardToSnapshot(this.snapshot, xpReward, now);
+    this.playStateAnimation(this.snapshot.state);
     return true;
   }
 
@@ -411,10 +479,15 @@ export class CrewUnit {
       return;
     }
 
-    const pulse = 1 + Math.sin(now * 0.02) * 0.2;
-    this.commsHalo.setScale(pulse);
-    this.commsHalo.setAlpha(0.28 + Math.sin(now * 0.015) * 0.12);
-    this.commsCore.setScale(1 + Math.sin(now * 0.03) * 0.08);
+    const pulse = 1 + Math.sin(now * 0.026) * 0.34;
+    const blink = Math.sin(now * 0.04) > 0 ? 1 : 0.28;
+
+    this.commsHalo.setScale(1.15 * pulse);
+    this.commsHalo.setAlpha(0.5 + Math.sin(now * 0.02) * 0.24);
+    this.commsCore.setScale(1.08 + Math.sin(now * 0.05) * 0.2);
+    this.commsCore.setAlpha(0.55 + blink * 0.45);
+    this.commsText.setScale(1 + Math.sin(now * 0.055) * 0.14);
+    this.commsText.setAlpha(0.7 + blink * 0.3);
   }
 }
 

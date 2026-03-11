@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyActionToSnapshot,
+  deriveRequestingInputFlag,
   deriveStateFromAction,
   levelFromXp,
   type CrewSnapshot
@@ -56,5 +57,13 @@ describe('CrewUnit state machine', () => {
     expect(levelFromXp(0)).toBe(1);
     expect(levelFromXp(60)).toBeGreaterThanOrEqual(2);
     expect(levelFromXp(1200)).toBeGreaterThanOrEqual(8);
+  });
+
+  it('keeps requesting-input only for input requests or when no event arrives', () => {
+    expect(deriveRequestingInputFlag(false, 'input_request')).toBe(true);
+    expect(deriveRequestingInputFlag(true, 'idle')).toBe(false);
+    expect(deriveRequestingInputFlag(true, 'terminal')).toBe(false);
+    expect(deriveRequestingInputFlag(true, 'terminal', 'cursor_composer_storage')).toBe(true);
+    expect(deriveRequestingInputFlag(true, null)).toBe(true);
   });
 });
