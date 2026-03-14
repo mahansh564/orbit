@@ -64,15 +64,17 @@ export class BootScene extends Phaser.Scene {
     ] as const;
 
     for (const role of crewRoles) {
+      const cruiseFrames = [
+        { key: `crew-${role}-walk-a` },
+        { key: `crew-${role}-walk-a` },
+        { key: `crew-${role}-walk-a` },
+        { key: `crew-${role}-walk-a` }
+      ];
+
       if (!this.anims.exists(`${role}-walk`)) {
         this.anims.create({
           key: `${role}-walk`,
-          frames: [
-            { key: `crew-${role}-walk-a` },
-            { key: `crew-${role}-walk-b` },
-            { key: `crew-${role}-walk-a` },
-            { key: `crew-${role}-walk-b` }
-          ],
+          frames: cruiseFrames,
           frameRate: 8,
           repeat: -1
         });
@@ -86,12 +88,7 @@ export class BootScene extends Phaser.Scene {
 
         this.anims.create({
           key: stateKey,
-          frames: [
-            { key: `crew-${role}-walk-a` },
-            { key: `crew-${role}-walk-b` },
-            { key: `crew-${role}-walk-a` },
-            { key: `crew-${role}-walk-b` }
-          ],
+          frames: cruiseFrames,
           frameRate: state === 'alert' ? 11 : 8,
           repeat: -1
         });

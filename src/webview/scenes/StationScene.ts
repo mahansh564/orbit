@@ -36,12 +36,15 @@ const CREW_ROAM_SPEED_RANGE = {
   max: 30
 } as const;
 const CREW_ROAM_TURN_INTERVAL_MS = {
-  min: 3600,
-  max: 8200
+  min: 9000,
+  max: 16_000
 } as const;
-const CREW_ROAM_TURN_ARC_DEGREES = 28;
-const CREW_ROAM_STEER_RESPONSE = 4.6;
+const CREW_ROAM_TURN_ARC_DEGREES = 10;
+const CREW_ROAM_STEER_RESPONSE = 2.9;
 const CREW_ROAM_MAX_CATCHUP_BOOST = 10;
+const CREW_ROAM_MAX_TURN_RATE_DEGREES_PER_SECOND = 46;
+const CREW_ROAM_ZONE_SWITCH_COOLDOWN_MS = 9000;
+const CREW_ROAM_ZONE_SWITCH_COMMIT_MS = 3000;
 const CREW_MOVEMENT_BOUNDS = {
   minX: 28,
   maxX: STATION_DIMENSIONS.width - 28,
@@ -78,6 +81,9 @@ interface CrewRoamState {
   speed: number;
   nextTurnAt: number;
   zone: StationZone;
+  zoneLockUntil: number;
+  pendingZone: StationZone | null;
+  pendingZoneSince: number;
 }
 
 /**
@@ -689,7 +695,7 @@ export class StationScene extends Phaser.Scene {
       const current = crew.getPosition();
       const zone = zoneForCrewState(crew.getSnapshot().state);
       const roamState = this.getOrCreateRoamState(agentId, zone, now);
-      const target = zoneTarget(agentId, zone);
+      const target = zoneTarget(agentId, roamState.zone);
       const dx = target.x - current.x;
       const dy = target.y - current.y;
       const distanceToZone = Math.hypot(dx, dy);
@@ -705,9 +711,10 @@ export class StationScene extends Phaser.Scene {
         roamState.desiredVx = headingX * desiredSpeed;
         roamState.desiredVy = headingY * desiredSpeed;
       } else if (now >= roamState.nextTurnAt) {
-        this.retargetRoamState(roamState, zone, now);
+        this.retargetRoamState(roamState, roamState.zone, now);
       }
 
+      this.limitRoamTurnRate(roamState, distanceFactor);
       roamState.vx = Phaser.Math.Linear(roamState.vx, roamState.desiredVx, steerBlend);
       roamState.vy = Phaser.Math.Linear(roamState.vy, roamState.desiredVy, steerBlend);
 
@@ -736,7 +743,19 @@ export class StationScene extends Phaser.Scene {
     const existing = this.crewRoamStates.get(agentId);
     if (existing !== undefined) {
       if (existing.zone !== zone) {
-        this.retargetRoamState(existing, zone, now);
+        if (existing.pendingZone !== zone) {
+          existing.pendingZone = zone;
+          existing.pendingZoneSince = now;
+        } else if (
+          now - existing.pendingZoneSince >= CREW_ROAM_ZONE_SWITCH_COMMIT_MS &&
+          now >= existing.zoneLockUntil
+        ) {
+          this.retargetRoamState(existing, zone, now);
+          existing.zoneLockUntil = now + CREW_ROAM_ZONE_SWITCH_COOLDOWN_MS;
+          existing.pendingZone = null;
+        }
+      } else {
+        existing.pendingZone = null;
       }
       return existing;
     }
@@ -752,7 +771,10 @@ export class StationScene extends Phaser.Scene {
       desiredVy: Math.sin(initialAngle) * initialSpeed,
       speed: initialSpeed,
       nextTurnAt: now + this.randomTurnIntervalMs(),
-      zone
+      zone,
+      zoneLockUntil: now + CREW_ROAM_ZONE_SWITCH_COOLDOWN_MS,
+      pendingZone: null,
+      pendingZoneSince: 0
     };
 
     this.crewRoamStates.set(agentId, initialState);
@@ -778,6 +800,32 @@ export class StationScene extends Phaser.Scene {
 
   private randomTurnIntervalMs(): number {
     return Phaser.Math.Between(CREW_ROAM_TURN_INTERVAL_MS.min, CREW_ROAM_TURN_INTERVAL_MS.max);
+  }
+
+  private limitRoamTurnRate(state: CrewRoamState, deltaSeconds: number): void {
+    const currentSpeed = Math.hypot(state.vx, state.vy);
+    const desiredSpeed = Math.hypot(state.desiredVx, state.desiredVy);
+    if (currentSpeed < 0.001 || desiredSpeed < 0.001) {
+      return;
+    }
+
+    const maxTurnRadians =
+      Phaser.Math.DegToRad(CREW_ROAM_MAX_TURN_RATE_DEGREES_PER_SECOND) * deltaSeconds;
+    if (maxTurnRadians <= 0) {
+      return;
+    }
+
+    const currentAngle = Math.atan2(state.vy, state.vx);
+    const desiredAngle = Math.atan2(state.desiredVy, state.desiredVx);
+    const angleDelta = Phaser.Math.Angle.Wrap(desiredAngle - currentAngle);
+    if (Math.abs(angleDelta) <= maxTurnRadians) {
+      return;
+    }
+
+    const clampedDelta = clamp(angleDelta, -maxTurnRadians, maxTurnRadians);
+    const limitedAngle = currentAngle + clampedDelta;
+    state.desiredVx = Math.cos(limitedAngle) * desiredSpeed;
+    state.desiredVy = Math.sin(limitedAngle) * desiredSpeed;
   }
 
   private setSelectedAgent(agentId: string | null): void {
